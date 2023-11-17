@@ -3,7 +3,7 @@ import os
 import tqdm
 import argparse
 import threading 
-from server import on_new_conn 
+from server import on_new_conn , server_command_executor
 
 
 HEADER = 64
@@ -15,7 +15,8 @@ def readyToServe():
     while True:
         try: 
             conn, addr = mstsocket.accept()
-            threading._start_new_thread(on_new_conn,(conn, addr))
+            threading.Thread(target = on_new_conn,args = (conn, addr)).start()
+            threading.Thread(target= server_command_executor).start()
             message = str("Server ready to serve...").encode(FORMAT)
             conn.send(message)
         except KeyboardInterrupt:

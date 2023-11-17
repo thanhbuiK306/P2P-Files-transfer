@@ -47,17 +47,28 @@ def fetch_file(client:socket.socket):
     
     data = client.recv(BUFFSIZE)
 
-
-def command_executor(conn,addr):
+def server_command_executor():
+    print("Server side... ")
+    while True:
+        command  = input()
+        command = command.split(' ')      
+        if command[0] == 'discover':
+            print("[DISCOVER] hostname")
+        elif command[0] == 'ping':
+            print("[PING] hostname")
+        elif command[0] =='exit':
+            print("[EXIT] successfull, all connetion has been closed")
+            break
+        else:
+            print("[INCOMPLETE] command not found")
+def client_command_executor(conn,addr):
     while True:
         request = conn.recv(BUFFSIZE).decode(FORMAT)
         request = str(request).split(' ')
-        print(request)
         if request[0] == 'publish':
             message_response = str("Server ready to be get file...").encode(FORMAT)
             conn.send(message_response)
             fetch_file(conn)
-            print("[FETCHING] successful")
             
         elif request[0] == 'fetch':
             message_response = str("Server ready to be provide communication...").encode(FORMAT)
@@ -75,4 +86,4 @@ def on_new_conn(conn, addr):
     list_conn_port.append(addr[1])
     print(f"THe new addr was made from IP: {ip}, and port: {port}!")
     
-    threading._start_new_thread(command_executor,(conn, addr))
+    threading._start_new_thread(client_command_executor,(conn, addr))
