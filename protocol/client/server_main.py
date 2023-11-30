@@ -3,7 +3,7 @@ import os
 import tqdm
 import argparse
 import threading 
-from server import on_new_conn , server_command_executor
+from server import on_new_conn , server_command_executor, client_command_executor
 
 
 HEADER = 64
@@ -12,13 +12,19 @@ mstsocket = socket.socket()
 mstsocket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 
 def readyToServe():
-    while True:
-        try: 
-            conn, addr = mstsocket.accept()
-            threading.Thread(target = on_new_conn,args = (conn, addr)).start()
+    # while True:
+    #     try: 
+    #         #conn, addr = mstsocket.accept()
+    #         #threading.Thread(target = on_new_conn,args = (conn, addr)).start()
+    #         # message = str("Server ready to serve...").encode(FORMAT)
+    #         # conn.send(message)
+        try:
             threading.Thread(target= server_command_executor).start()
-            message = str("Server ready to serve...").encode(FORMAT)
-            conn.send(message)
+            while True:
+                conn, addr = mstsocket.accept()
+                if conn is not None:
+                    threading.Thread(target = on_new_conn,args = (conn, addr)).start()
+                    # threading._start_new_thread(client_command_executor,(conn,))
         except KeyboardInterrupt:
             print(f"Gracefully shutting down the server!")
         except Exception as e:
