@@ -8,22 +8,22 @@ import tqdm
 import logging
 
 PEERS_DIR = 'local/'
-PEER_TIMEOUT = 2
+PEER_TIMEOUT = 10
 FORMAT = 'utf-8'
-BUFFSIZE = 2048
+BUFFSIZE = 4096
 class file:
-    chunk_size = 2048
+    chunk_size = 4096
 
     def __init__(self, filename: str,lname = None, owner = None):
         self.filename = filename
-        if not owner:
+        if lname:
             self.path = lname # mark as completeFile
         else:
             self.path = PEERS_DIR + filename
 
 class completeFile(file):
 
-    def __init__(self, filename: str, lname: str, owner= None):
+    def __init__(self, filename: str, lname = None, owner= None):
         super().__init__(filename, lname, owner)
         self.size = self.get_size(self.path)
         self.n_chunks = ceil(self.size / self.chunk_size)
@@ -65,55 +65,6 @@ class incompleteFile(file):
             with open(self.path, 'wb') as filep:
                 for i in range(self.n_chunks):
                     filep.write(self.received_chunks[i])
-
-def command_executor(port_no, name, p):
-    connected = 0
-    try:
-        while True:
-            inp = input(">")
-            if inp == 'cls' or inp == '0':
-                if connected:
-                    p.disconnect()
-                    del p
-                    connected = 0
-                else:
-                    print("peer is not connected!")
-
-            if inp == "conn" or inp == '1':
-                if not connected:
-                    p = start_peer(port_no, name)
-                    connected = 1
-                else:
-                    print("peer is already connected to manager")
-
-            if inp == "get_files":
-                p.listFileAvailable()
-            
-            if inp == "get_peers" or inp == '2':
-                update_peers_thread = threading.Thread(target=p.update_peers)
-                update_peers_thread.start()
-                update_peers_thread.join()
-                print(f"available peers are: {p.peers}")
-
-            if inp == "fetch" or inp == '3':
-                file_name = input("Enter file name : ")
-                command = "fetch "+ file_name
-                p.fetch(command)
-
-                #p.receive_file(file_name , fileOwner)
-
-            if inp == 'shareble_files' or inp == '4':
-                print(f"our available files are: {list(p.available_files.keys())}")
-            if inp == 'publish':
-                req_file_name = input("Input req_file_name")
-                lname = input("Input lname")
-                p.filePublish(req_file_name,lname)
-                command = inp + " " + req_file_name +" "+lname + " "+ p.name
-                p.publish(command)
-            if inp == 'end' or inp == '5':
-                os._exit(0)
-    except KeyboardInterrupt:
-        os._exit(0)
 class Peer:
     s: socket.socket
     
@@ -125,7 +76,7 @@ class Peer:
     manager_port = 1233
     addr: (str, int)
     available_files: dict[str, completeFile]
-
+    list_files =[]
     def __init__(self, port_no: int, name: str, ip_addr='127.0.0.1'):
         self.ip = socket.gethostbyname(socket.gethostname())
         self.port = port_no
@@ -153,7 +104,10 @@ class Peer:
         if msg == 'Send port':
             self.s.send(pickle.dumps(self.addr))
     def send_manager(self,msg):
-        self.s.send(msg.encode(FORMAT))
+        try:
+            self.s.send(msg.encode(FORMAT))
+        except:
+            print("Server connection has been shut down")
     def receive(self, port_no, name, p):
         """
         receive the other peers and update the list.
@@ -162,18 +116,15 @@ class Peer:
             try:
                 msg = self.s.recv(512)
                 msg = pickle.loads(msg)
-                
                 if msg == "testing conn":
-                    print(msg)
                     # self.peers = msg['peers']
                     # logging.info(f"available peers are {self.peers}")
                     # print(f"available peers are {self.peers}")
                     # msg =pickle.loads(self.s.recv(512))
                     # print(msg)
-                    t1 =threading.Thread(target = command_executor, args=(port_no,name,p))
+                    t1 =threading.Thread(target = self.command_executor)
                     t1.start()
                     t1.join()
-                    
             except ConnectionAbortedError:
                 print("connection with manager is closed")
                 break
@@ -184,37 +135,50 @@ class Peer:
             self.s.send(msg)
         except Exception:
             print("could not get the peers list")
-    def filePublish(self, req_file_name, lname):
-        self.available_files[req_file_name] = completeFile(filename=req_file_name, lname=lname)
+    def filePublish(self, req_filename, lname):
+        try:
+            self.available_files[req_filename] = completeFile(filename=req_filename, lname=lname)
+            return True
+        except:
+            print("Path does not exists")
+        return False
     def publish(self, command):
         try:
             self.s.send(command.encode(FORMAT))
             # command[0] : publish
-            # command[1] : req_file_name
+            # command[1] : req_filename
             # command[2] : lname 
         except Exception as e:
-            print(e)
             print("could not publish the file")
     def fetch(self,command):
         self.send_manager(command)
         fileDetail = pickle.loads(self.s.recv(4096))
-        print(type(fileDetail))
-        print(fileDetail)
         # connect
         ownerIp = fileDetail[0]
         ownerPort= int(fileDetail[1])
-        ownerName = fileDetail[2]
-        ownerreq_file_name = fileDetail[3]
-        self.receive_file((ownerIp, ownerPort),ownerName, ownerreq_file_name)
+        ownerreq_filename = fileDetail[3]
+        self.receive_file((ownerIp, ownerPort),ownerreq_filename)
         # rec file
     # def __del__(self):
     #     self.s.close()
     #     self.my_socket.close()
     def listFileAvailable(self):
         self.send_manager("get_files")
-        data= self.s.recv(4096)
-        listFile = pickle.loads(data)
-        print(listFile)
+        try:
+            rows= self.s.recv(4096).decode(FORMAT)
+            self.s.send(b'ACK')
+            self.list_files = []
+            for row in range(int(rows)):
+                data= self.s.recv(4096)
+                file = pickle.loads(data)
+                file.append(row)
+                self.list_files.append(file)
+                self.s.send(b'ACK')
+            return self.list_files
+        except: 
+            # print("connection with manager is closeddddd")
+            os._exit(0)
+
     def disconnect(self):
         """
         Disconnect the connected socket.
@@ -232,7 +196,6 @@ class Peer:
         try:
             while True:
                 c, addr = self.my_socket.accept()
-                print(addr)
                 self.peers_connections[addr] = {
                     "connection": c
                 }
@@ -253,44 +216,31 @@ class Peer:
             try:
                 # handle when peer disconnect
                 msg = pickle.loads(c.recv(2048))
-
                 if msg['type'] == 'fetch':
-                    req_file_name = msg['data']
-                    if req_file_name in self.available_files:
+                    req_filename = msg['data']
+                    if req_filename in self.available_files:
                         file_detail = pickle.dumps({
                             "type": "available_file",
                             "data": {
-                                "filesize": str(self.available_files[req_file_name].size)
+                                "filesize": str(self.available_files[req_filename].size)
                             }
                         })
-                        c.send(file_detail)
-                        with self.available_files[req_file_name].fp as f:
-                            data_sent = 0
-                            file_size = self.available_files[req_file_name].size
-                            progress = tqdm.tqdm(range(file_size), desc=req_file_name, unit='B', unit_scale=True, unit_divisor=BUFFSIZE)
-                            while data_sent < file_size:
-                                file_data = f.read(BUFFSIZE)
-                                c.sendall(file_data)
-                                data_sent += BUFFSIZE
-                                progress.update(BUFFSIZE)
-                            progress.desc = f'{req_file_name} Sent'
-                            progress.close()
-                            print("send successful")
+                        c.sendall(file_detail)
+
                 if msg['type'] == 'request_chunk':
-                    file_name = msg['data']['filename']
+                    filename = msg['data']['filename']
                     chunk_no = msg['data']['chunk_no']
-                    chunk = self.available_files[file_name].get_chunk_no(chunk_no)
+                    chunk = self.available_files[filename].get_chunk_no(chunk_no)
                     ret_msg = pickle.dumps({
                         "type": "response_chunk",
                         "data": {
                             "chunk_no": chunk_no,
-                            "filename": file_name,
+                            "filename": filename,
                             "chunk": chunk
                         }
                     })
-
-                    c.send(ret_msg)
-            except EOFError:  # TODO: don't know what is happening here.
+                    c.sendall(ret_msg)
+            except EOFError:  # TODO: domn't know what is happening here.
                 pass
 
     def connect_to_peer(self, addr):
@@ -300,48 +250,69 @@ class Peer:
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         try:
             sock.connect(addr)
+            sock.setblocking(1)
             print("Connectted to ", addr)
             logging.info(f"Connected to Peer {addr}")
         except:
             print("could not connect to ", addr)
         return sock
 
-    def connect_and_fetch_file_detail(self, addr, file_name, file_detail: dict[str, object]):
+    def connect_and_fetch_file_detail(self, addr, filename, file_detail: dict[str, object]):
         c = self.connect_to_peer(addr) #addr retrive from server
         msg = pickle.dumps({
             "type": "fetch",
-            "data": file_name
+            "data": filename
         })
         c.send(msg)
-        c.settimeout(10000)
+        c.settimeout(PEER_TIMEOUT)
 
+        msg = pickle.loads(c.recv(2048)) 
+        if msg['type'] == "available_file":
+            file_detail['size'] = msg['data']['filesize']
+            file_detail['peer_own_file'] = addr
+
+        if file_detail['size'] is None:
+            print("File not found")
+            return
         try:
-            msg = pickle.loads(c.recv(4096)) # error here
-            if msg['type'] == "available_file":
-                file_detail['size'] = msg['data']['filesize']
-                file_detail['peer_own_file'] = addr
-                print("i need more sleep", file_detail)
-                
-                file_data = b''
-                file_size = int(file_detail['size'])
-                progress = tqdm.tqdm(range(file_size), desc=f"Receiving {file_name}", unit='B', unit_scale=True, unit_divisor=2048)
-                while len(file_data) < file_size:
-                    data = c.recv(BUFFSIZE)
-                    file_data += data
-                    progress.update(BUFFSIZE)
-                progress.desc = f"{file_name} Received"
-                progress.close()
+            recieving_file = incompleteFile(filename=filename, owner = self.name, size= int(file_detail['size']))
+            needed_chunks = recieving_file.get_needed()
+            peer_own_file = addr
+            i =0
+            progress = tqdm.tqdm(range(len(needed_chunks)), desc=f"Receiving {filename}")
+            if  len(recieving_file.get_needed()) != 0:       
+                while i < len(needed_chunks):
+                        msg = pickle.dumps({
+                            "type": "request_chunk",
+                            "data": {
+                                "filename": filename,
+                                "chunk_no": i
+                            }
+                        })
+                        c.send(msg)
+                        c.settimeout(10000)            
+                        try:
+                            data = c.recv(8192)
+                            msg = pickle.loads(data) 
+                            if msg['type'] == "response_chunk":
+                                recieving_file.write_chunk(msg['data']['chunk'], i)
+                                progress.update(1)
 
-                file_path = os.path.join('local/', file_name)
-                with open(file_path, 'wb') as f:
-                    f.write(file_data)
-                
-                print("fetch successful")
+                        except socket.timeout:
+                            print(f"peer {peer_own_file} did not send the file")
+
+                        logging.info(f"received the chunk {i}/{recieving_file.n_chunks} from {peer_own_file}")
+                        i += 1
+                progress.desc = f"{filename} Received"
+                progress.close()
+                recieving_file.write_file()
+                self.available_files[filename] = completeFile(filename=filename, owner = self.name)
+                # print("fetch successful")
         except socket.timeout:
             print("socket did not respond while fetching detail of file")
         c.close()
 
-    def get_file_detail(self,p, file_name: str):
+    def get_file_detail(self,p, filename: str):
         """
         Check which peers have the file and what parts of it they have.
         Details of the file such as size are also sent.
@@ -352,12 +323,11 @@ class Peer:
         }
         # p = fetchFileFrom
         if p != self.addr:
-            print(p, self.addr)
-            self.connect_and_fetch_file_detail(p, file_name, file_detail)
+            self.connect_and_fetch_file_detail(p, filename, file_detail)
         return file_detail
 
-    def get_chunk_from_peer(self, filename, peer_addr, chunk_no, incomp_file: incompleteFile):
-        c = self.connect_to_peer(peer_addr)
+    def get_chunk_from_peer(self, filename, peer_addr, chunk_no, incomp_file: incompleteFile, c: socket.socket): # how connect have execute in connect_and_fetch_file_detail
+        # c = self.connect_to_peer(peer_addr)
         msg = pickle.dumps({
             "type": "request_chunk",
             "data": {
@@ -367,9 +337,9 @@ class Peer:
         })
         c.send(msg)
         c.settimeout(PEER_TIMEOUT)
+        
+        msg = pickle.loads(c.recv(2048))
         try:
-            msg = pickle.loads(c.recv(4096))
-
             if msg['type'] == "response_chunk":
                 incomp_file.write_chunk(msg['data']['chunk'], chunk_no)
 
@@ -377,36 +347,87 @@ class Peer:
             print(f"peer {peer_addr} did not send the file")
 
         logging.info(f"received the chunk {chunk_no}/{incomp_file.n_chunks} from {peer_addr}")
-        print(f"received the chunk {chunk_no}/{incomp_file.n_chunks} from {peer_addr}")
+        # print(f"received the chunk {chunk_no}/{incomp_file.n_chunks} from {peer_addr}")
 
-        c.close()
 
-    def receive_file(self, peerAddr, fileOwner, filename):
-        file_detail = self.get_file_detail(peerAddr ,filename)
-        logging.info(f"{file_detail}")
-        if file_detail['size'] is None:
-            print("File not found")
-            return
+    def receive_file(self, peerAddr, filename):
+        self.get_file_detail(peerAddr ,filename)
+        # logging.info(f"{file_detail}")
+        # if file_detail['size'] is None:
+        #     print("File not found")
+        #     return
         # recieving_file = incompleteFile(filename=filename, owner = self.name, size= int(file_detail['size']))
         
-        # print(recieving_file)
-        # while len(recieving_file.get_needed()) != 0:
-        #     self.update_peers()
-        #     peer_own_file = self.get_file_detail(peerAddr,filename)['peer_own_file']
-        #     if peer_own_file == None:
-        #         print(f"there are no peers with file {filename}")
-        #         del recieving_file
-        #         return
 
-        #     needed_chunks = recieving_file.get_needed()
-        #     print(needed_chunks)
-        #     print(peer_own_file)
+        # i = 0
+        # running_threads = []
+        # peer_own_file = file_detail['peer_own_file'] # check peer online needed!!!!!
+        # if peer_own_file == None:
+        #     print(f"there are no peers with file {filename}")
+        #     del recieving_file
+        #     return
+        # needed_chunks = recieving_file.get_needed()
+        # while len(recieving_file.get_needed()) != 0:       
+        #     print(i)
+        #     if i < len(needed_chunks):
+        #         get_chunk_thread = threading.Thread(
+        #             target=self.get_chunk_from_peer,
+        #             args=(filename, peer_own_file, needed_chunks[i], recieving_file)
+        #         )
+        #         running_threads.append(get_chunk_thread)
+        #         get_chunk_thread.start()
+        #         i += 1
+        #         get_chunk_thread.join()
 
         # recieving_file.write_file()
         # self.available_files[filename] = completeFile(filename=filename, owner = self.name)
         # print(f"recieved {filename}")
 
+    def command_executor(self):
+        connected = 1
+        try:
+            while True:
+                inp = input(">")
+                if inp == 'cls' or inp == '0':
+                    if connected:
+                        self.disconnect()
+                        del self.s
+                        connected = 0
+                    else:
+                        print("peer is not connected!")
 
+                if inp == "get_files":
+                    print(self.listFileAvailable())
+                
+                if inp == "get_peers" or inp == '2':
+                    update_peers_thread = threading.Thread(target=self.update_peers)
+                    update_peers_thread.start()
+                    update_peers_thread.join()
+                    print(f"available peers are: {self.peers}")
+
+                if inp == "fetch" or inp == '3':
+                    listFile = self.listFileAvailable()
+                    for file in listFile:
+                        print(f"File {file[3]} was published by {file[2]}")
+                    file = listFile[int(input("Choose your file you want"))]
+                    command = "fetch "+ file[3] + " " + file[2]
+                    self.fetch(command)
+
+                    #self.receive_file(filename , fileOwner)
+
+                if inp == 'shareble_files' or inp == '4':
+                    print(f"our available files are: {list(self.available_files.keys())}")
+                if inp == 'publish':
+                    req_filename = input("Input req_filename")
+                    lname = input("Input lname")
+                    while not self.filePublish(req_filename,lname) :
+                        lname = input("Input lname again")
+                    command = inp + " " + req_filename +" "+lname + " "+ self.name
+                    self.publish(command)
+                if inp == 'end' or inp == '5':
+                    os._exit(0)
+        except KeyboardInterrupt:
+            os._exit(0)
 def start_peer(port_no, name):
     """
     start the peer.
